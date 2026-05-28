@@ -112,7 +112,7 @@ def load_tokenizer_and_model(
     model_id: str, local_files_only: bool, token: str | None
 ) -> tuple[AutoTokenizer, AutoModel]:
     tokenizer = AutoTokenizer.from_pretrained(
-        model_id, local_files_only=local_files_only, token=token
+        model_id, add_prefix_space=True, local_files_only=local_files_only, token=token
     )
     model = AutoModel.from_pretrained(
         model_id, local_files_only=local_files_only, token=token
@@ -129,7 +129,10 @@ def pool_sub_tokens_to_words(hidden_state, word_ids):
             i for i, w in enumerate(word_ids) 
             if w == word_id]
         
-        word_vector = hidden_state[subtoken_indices].mean(dim=0)
+        if not subtoken_indices:
+            raise ValueError(f"no subtokens found for word_is={word_id}")
+        
+        word_vector = hidden_state[subtoken_indices[-1]]
         word_representations.append(word_vector)
     
     return torch.stack(word_representations)
@@ -163,3 +166,45 @@ def compute_metrics(y_true, y_pred):
         "f1": f1,
         "f0.5": f05,
     }
+
+def tokens_to_text_and_spans(tokens):
+    text_parts = []
+    word_spans = []
+    cursor = 0
+
+    for idx, token in enumerate(tokens):
+        if idx > 0:
+            text_parts.append(" ")
+            cursor += 1
+        
+        start = cursor
+        text_parts.append(token)
+        cursor += len(token)
+        end = cursor
+
+        word_spans.append((start, end))
+
+    return "".join(text_parts), word_spans
+
+def offsets_to_word_ids(offsets, word_spans):
+    word_ids = []
+
+    for offset in offsets:
+        sub_start, sub_end = int(offset[0]), int(offset[1])
+
+        if sub_start == sub_end:
+            word_ids.append(None)
+            continue
+
+        matched_word_id = None
+
+        for word_id, (word_start, word_end) in enumerate(word_spans):
+            overlaps = sub_start < word_end and sub_end > word_start
+            if overlaps:
+                matched_word_id = word_id
+                break
+
+        word_ids.append(matched_word_id)
+
+    return word_ids
+

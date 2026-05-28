@@ -49,33 +49,15 @@ def load_hidden_size(feature_dirs):
     return metadata["hidden_size"]
 
 
-def load_threshold_manifest(probe_dir, threshold_path):
-    if threshold_path is None:
-        threshold_path = probe_dir / "best_thresholds.json"
-
-    if not threshold_path.exists():
-        return None
-
-    with open(threshold_path) as f:
-        return json.load(f)
+def build_probe(hidden_size, device):
+    return torch.nn.Sequential(
+        torch.nn.Dropout(0.1),
+        torch.nn.Linear(hidden_size, 2),
+    ).to(device)
 
 
-def get_threshold(layer_idx, explicit_threshold, threshold_manifest):
-    if explicit_threshold is not None:
-        return explicit_threshold
-
-    if threshold_manifest is None:
-        return 0.5
-
-    layer_info = threshold_manifest.get(str(layer_idx))
-    if layer_info is None:
-        return 0.5
-
-    return float(layer_info["threshold"])
-
-
-def get_probs_and_labels(probe, loader, device):
-    all_probs = []
+def get_preds_and_labels(probe, loader, device):
+    all_preds = []
     all_labels = []
 
     probe.eval()
@@ -85,12 +67,12 @@ def get_probs_and_labels(probe, loader, device):
             batch_X = batch_X.float().to(device)
 
             logits = probe(batch_X)
-            probs = torch.softmax(logits, dim=-1)[:, 1].cpu()
+            preds = torch.argmax(logits, dim=-1).cpu()
 
-            all_probs.append(probs)
+            all_preds.append(preds)
             all_labels.append(batch_y.cpu())
 
-    return torch.cat(all_probs), torch.cat(all_labels)
+    return torch.cat(all_preds), torch.cat(all_labels)
 
 
 def evaluate_probe_on_features(
@@ -98,14 +80,13 @@ def evaluate_probe_on_features(
     feature_dirs,
     hidden_size,
     device,
-    threshold,
     batch_size,
 ):
     layer_idx = parse_probe_layer(probe_path)
-    probe = torch.nn.Linear(hidden_size, 2).to(device)
+    probe = build_probe(hidden_size=hidden_size, device=device)
     probe.load_state_dict(torch.load(probe_path, map_location=device))
 
-    layer_probs = []
+    layer_preds = []
     layer_labels = []
     total_examples = 0
 
@@ -123,9 +104,9 @@ def evaluate_probe_on_features(
 
         dataset = TensorDataset(X, y)
         loader = DataLoader(dataset, batch_size=batch_size)
-        probs, labels = get_probs_and_labels(probe, loader, device)
+        preds, labels = get_preds_and_labels(probe, loader, device)
 
-        layer_probs.append(probs)
+        layer_preds.append(preds)
         layer_labels.append(labels)
         total_examples += len(labels)
 
@@ -139,14 +120,13 @@ def evaluate_probe_on_features(
         elif device.type == "cuda":
             torch.cuda.empty_cache()
 
-    probs = torch.cat(layer_probs)
+    preds = torch.cat(layer_preds)
     labels = torch.cat(layer_labels)
-    preds = (probs >= threshold).long()
     metrics = compute_metrics(y_true=labels, y_pred=preds)
 
     return {
         "layer": layer_idx,
-        "threshold": threshold,
+        "decision_rule": "argmax",
         "num_examples": total_examples,
         **metrics,
     }
@@ -162,7 +142,7 @@ def save_results(results, output_path):
 
     fieldnames = [
         "layer",
-        "threshold",
+        "decision_rule",
         "num_examples",
         "accuracy",
         "recall",
@@ -198,18 +178,6 @@ def parse_args():
         help="Path to write aggregate metrics, as .csv or .json.",
     )
     parser.add_argument(
-        "--threshold",
-        type=float,
-        default=None,
-        help="Override the positive-class probability threshold for all layers.",
-    )
-    parser.add_argument(
-        "--thresholds-path",
-        type=Path,
-        default=None,
-        help="Path to best_thresholds.json. Defaults to probe-dir/best_thresholds.json.",
-    )
-    parser.add_argument(
         "--batch-size",
         type=int,
         default=2048,
@@ -230,10 +198,6 @@ def main():
     probe_paths = find_probe_paths(args.probe_dir)
     feature_dirs = find_feature_dirs(args.features_dir)
     hidden_size = load_hidden_size(feature_dirs)
-    threshold_manifest = load_threshold_manifest(
-        probe_dir=args.probe_dir,
-        threshold_path=args.thresholds_path,
-    )
 
     print(f"device={device}")
     print(f"probe_dir={args.probe_dir}")
@@ -241,28 +205,17 @@ def main():
     print(f"feature_sets={len(feature_dirs)}")
     print(f"probes={len(probe_paths)}")
     print(f"hidden_size={hidden_size}")
-    if args.threshold is not None:
-        print(f"threshold=explicit:{args.threshold}")
-    elif threshold_manifest is not None:
-        print("thresholds=best_thresholds.json")
-    else:
-        print("thresholds=default:0.5")
+    print("decision_rule=argmax")
 
     results = []
     for probe_path in probe_paths:
         layer_idx = parse_probe_layer(probe_path)
-        threshold = get_threshold(
-            layer_idx=layer_idx,
-            explicit_threshold=args.threshold,
-            threshold_manifest=threshold_manifest,
-        )
-        print(f"evaluating layer {layer_idx} threshold={threshold:.2f}")
+        print(f"evaluating layer {layer_idx} decision_rule=argmax")
         result = evaluate_probe_on_features(
             probe_path=probe_path,
             feature_dirs=feature_dirs,
             hidden_size=hidden_size,
             device=device,
-            threshold=threshold,
             batch_size=args.batch_size,
         )
         results.append(result)

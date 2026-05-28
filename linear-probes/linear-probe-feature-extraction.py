@@ -10,7 +10,9 @@ from utils import (
     conll_to_dataset,
     load_tokenizer_and_model,
     login_to_huggingface,
+    offsets_to_word_ids,
     pool_sub_tokens_to_words,
+    tokens_to_text_and_spans
 )
 
 
@@ -24,15 +26,24 @@ def build_collate_fn(tokenizer):
         tokens = [item["tokens"] for item in batch]
         labels = [item["labels"] for item in batch]
 
+        sentence_texts = []
+        word_spans = []
+
+        for sentence_tokens in tokens:
+            sentence_text, sentence_word_spans = tokens_to_text_and_spans(sentence_tokens)
+            sentence_texts.append(sentence_text)
+            word_spans.append(sentence_word_spans)
+
         encoding = tokenizer(
-            tokens,
-            is_split_into_words=True,
+            sentence_texts,
+            return_offsets_mapping=True,
             return_tensors="pt",
             padding=True,
             truncation=True,
         )
 
         encoding["word_labels"] = labels
+        encoding["word_spans"] = word_spans
         return encoding
 
     return collate_fn
@@ -92,6 +103,9 @@ def extract_features(
         for batch_idx, batch in enumerate(dataloader, start=1):
             print(f"batch {batch_idx}/{total_batches}")
             labels = batch.pop("word_labels")
+            word_spans = batch.pop("word_spans")
+            offset_mapping = batch.pop("offset_mapping")
+
             batch = batch.to(device)
 
             output = model(**batch, output_hidden_states=True)
@@ -113,7 +127,10 @@ def extract_features(
                 layer_write_pos = batch_start
 
                 for i in range(layer.shape[0]):
-                    word_ids = batch.word_ids(batch_index=i)
+                    word_ids = offsets_to_word_ids(
+                        offsets=offset_mapping[i],
+                        word_spans=word_spans[i]
+                    )
                     word_vectors = pool_sub_tokens_to_words(layer[i], word_ids)
 
                     assert len(labels[i]) == word_vectors.shape[0]

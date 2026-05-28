@@ -47,7 +47,7 @@ def parse_args():
         "--selection-metric",
         choices=["accuracy", "recall", "precision", "f1", "f0.5"],
         default="f1",
-        help="Dev metric used to select checkpoints and thresholds.",
+        help="Dev metric used to select checkpoints.",
     )
     parser.add_argument(
         "--learning-rate",
@@ -66,13 +66,6 @@ def parse_args():
         type=int,
         default=2048,
         help="Dev evaluation batch size.",
-    )
-    parser.add_argument(
-        "--thresholds",
-        type=float,
-        nargs="+",
-        default=[0.1, 0.3, 0.5, 0.7, 0.9],
-        help="Positive-class probability thresholds to try on dev data.",
     )
     parser.add_argument(
         "--device",
@@ -125,7 +118,7 @@ def get_probs_and_labels(probe, loader, device):
             batch_X = batch_X.float().to(device)
 
             logits = probe(batch_X)
-            probs = torch.softmax(logits, dim=-1)[:, 1].cpu()
+            probs = torch.argmax(logits, dim=-1).cpu()
 
             all_probs.append(probs)
             all_labels.append(batch_y.cpu())
@@ -141,11 +134,10 @@ eval_batch_size = args.eval_batch_size
 epochs = args.epochs
 patience = args.patience
 selection_metric = args.selection_metric
-thresholds = np.array(args.thresholds)
 
 LOG_FILE = experiment_dir / "experiment_log.md"
-BEST_THRESHOLDS_FILE = experiment_dir / "best_thresholds.json"
 CONFIG_FILE = experiment_dir / "config.json"
+BEST_LAYERS_FILE = experiment_dir / "best_layers.json"
 best_by_layer = {}
 
 write_json(
@@ -160,7 +152,6 @@ write_json(
         "epochs": epochs,
         "patience": patience,
         "selection_metric": selection_metric,
-        "thresholds": thresholds.tolist(),
         "device": str(device),
     },
 )
@@ -171,14 +162,14 @@ content = f"""# Experiment Log
 
 ## Parameters
 
-| Learning Rate | Batch size | Eval batch size | Epochs | Patience | Selection metric | Thresholds |
-|---------------|------------|-----------------|--------|----------|------------------|------------|
-| {learning_rate} | {batch_size} | {eval_batch_size} | {epochs} | {patience} | {selection_metric} | {thresholds.tolist()} |
+| Learning Rate | Batch size | Eval batch size | Epochs | Patience | Selection metric |
+|---------------|------------|-----------------|--------|----------|------------------|
+| {learning_rate} | {batch_size} | {eval_batch_size} | {epochs} | {patience} | {selection_metric} |
 
 ## Training
 
-| Layer | Epoch | Loss | Threshold | Accuracy | Recall | Precision | F1 | F05 |
-|-------|-------|------|-----------|----------|--------|-----------|----|-----|
+| Layer | Epoch | Loss | Accuracy | Recall | Precision | F1 | F05 |
+|-------|-------|------|----------|--------|-----------|----|-----|
 """
 
 with open(LOG_FILE, "w") as f:
@@ -201,16 +192,20 @@ for layer_idx in range(num_hidden_states):
         f"dev_shape={tuple(X_dev.shape)}"
     )
 
-    probe = torch.nn.Linear(hidden_size, 2).to(device)
+    probe = torch.nn.Sequential(
+        torch.nn.Dropout(0.1),
+        torch.nn.Linear(hidden_size, 2),
+    ).to(device)
 
     dataset = TensorDataset(X, y)
     loader = DataLoader(dataset, batch_size = batch_size, shuffle=True)
 
-    class_counts = torch.bincount(y)
-    class_weights = len(y) / (len(class_counts) * class_counts)
-
-    loss_fn = torch.nn.CrossEntropyLoss(weight=class_weights.to(device))
-    optimizer = torch.optim.AdamW(probe.parameters(), lr=learning_rate)
+    loss_fn = torch.nn.CrossEntropyLoss()
+    optimizer = torch.optim.AdamW(
+        probe.parameters(), 
+        lr=learning_rate,
+        weight_decay=0.0001,
+    )
 
     best_score = -1
     probe_path = experiment_dir / f"probe_layer_{layer_idx:02}.pt"
@@ -241,58 +236,47 @@ for layer_idx in range(num_hidden_states):
             f"layer {layer_idx}: epoch {epoch + 1}/{epochs} "
             f"loss={avg_loss:.4f} evaluating"
         )
-        probs, y_dev_eval = get_probs_and_labels(probe, dev_loader, device)
-        epoch_best_score = -1
-        epoch_best_threshold = None
+        preds, y_dev_eval = get_probs_and_labels(probe, dev_loader, device)
+        metrics = compute_metrics(y_true=y_dev_eval, y_pred=preds)
+
+        row = (f"| {layer_idx} | {epoch + 1} | "
+                f"{avg_loss:.4f} | "
+                f"{metrics['accuracy']:.4f} | "
+                f"{metrics['recall']:.4f} | "
+                f"{metrics['precision']:.4f} | "
+                f"{metrics['f1']:.4f} | "
+                f"{metrics['f0.5']:.4f} |\n"
+        )
+
+        with open(LOG_FILE, "a") as f:
+            f.write(row)
+
+        score = metrics[selection_metric]
         epoch_improved = False
 
-        for threshold in thresholds:
-            preds = (probs >= threshold).long()
-            metrics = compute_metrics(y_true=y_dev_eval, y_pred=preds)
-
-            row = (f"| {layer_idx} | {epoch + 1} | "
-                   f"{avg_loss:.4f} | "
-                   f"{threshold:.2f} | "
-                   f"{metrics['accuracy']:.4f} | "
-                   f"{metrics['recall']:.4f} | "
-                   f"{metrics['precision']:.4f} | "
-                   f"{metrics['f1']:.4f} | "
-                   f"{metrics['f0.5']:.4f} |\n"
+        if score > best_score:
+            best_score = score
+            epoch_improved = True
+            torch.save(probe.state_dict(), probe_path)
+            best_by_layer[str(layer_idx)] = {
+                "layer": layer_idx,
+                "epoch": epoch + 1,
+                "decision_rule": "argmax",
+                "selection_metric": selection_metric,
+                "selection_score": float(score),
+                "metrics": json_safe_metrics(metrics),
+                "probe_path": str(probe_path),
+            }
+            write_json(BEST_LAYERS_FILE, best_by_layer)
+            print(
+                f"layer {layer_idx}: saved new best probe "
+                f"epoch={epoch + 1} "
+                f"{selection_metric}={best_score:.4f}"
             )
-
-            with open(LOG_FILE, "a") as f:
-                f.write(row)
-
-            score = metrics[selection_metric]
-
-            if score > best_score:
-                best_score = score
-                epoch_improved = True
-                torch.save(probe.state_dict(), probe_path)
-                best_by_layer[str(layer_idx)] = {
-                    "layer": layer_idx,
-                    "epoch": epoch + 1,
-                    "threshold": float(threshold),
-                    "selection_metric": selection_metric,
-                    "selection_score": float(score),
-                    "metrics": json_safe_metrics(metrics),
-                    "probe_path": str(probe_path),
-                }
-                write_json(BEST_THRESHOLDS_FILE, best_by_layer)
-                print(
-                    f"layer {layer_idx}: saved new best probe "
-                    f"epoch={epoch + 1} threshold={threshold:.2f} "
-                    f"{selection_metric}={best_score:.4f}"
-                )
-
-            if score > epoch_best_score:
-                epoch_best_score = score
-                epoch_best_threshold = threshold
 
         print(
             f"layer {layer_idx}: epoch {epoch + 1}/{epochs} "
-            f"best_threshold={epoch_best_threshold:.2f} "
-            f"best_{selection_metric}={epoch_best_score:.4f}"
+            f"best_{selection_metric}={score:.4f}"
         )
 
         if epoch_improved:
