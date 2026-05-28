@@ -225,8 +225,5 @@ __marimo__/
 # data
 modernbert_word_features_dev
 modernbert_word_features_train
-multiGED-2023-english
-modernbert_word_features_dev.pt
-ged-syntax-probing-main
 features
 experiments
