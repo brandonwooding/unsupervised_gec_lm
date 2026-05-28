@@ -43,6 +43,44 @@ def tsv_to_dataset(file_path):
     ds = Dataset.from_list(dataset)
     return ds
 
+def conll_to_dataset(file_path):
+    """
+    Read a CoNLL-style token-label file into a Hugging Face Dataset.
+
+    Blank lines separate sentences. The first column is treated as the token
+    and the last column is treated as the label.
+    """
+    sentences = []
+    tokens = []
+    labels = []
+
+    with open(file_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            
+            if not line:
+                if tokens:
+                    sentences.append({
+                        "tokens": tokens,
+                        "labels": labels
+                    })
+                    tokens = []
+                    labels = []
+                continue
+
+            columns = line.split()
+            tokens.append(columns[0])
+            labels.append(columns[-1].upper())
+
+    if tokens:
+        sentences.append({
+            "tokens": tokens,
+            "labels": labels
+        })
+    
+    ds = Dataset.from_list(sentences)
+    return ds
+
 
 def choose_device(name: str) -> torch.device:
     if name == "auto":
