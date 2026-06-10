@@ -14,21 +14,61 @@ model = AutoModelForMaskedLM.from_pretrained(model_id)
 model.to(device)
 model.eval()
 
-test_sentence = "The man enjoy playing cricket and hates intersectionality."
+test_sentence = "The man enjoy playing cricket and hate intersectionality."
 test_mask = f"The man {tokenizer.mask_token} playing cricket."
 target = "enjoy"
 print(test_sentence)
 
 encoding = tokenizer(test_sentence, return_tensors="pt").to(device)
 
-print(encoding["input_ids"])
-
-tokens = tokenizer.convert_ids_to_tokens(encoding["input_ids"][0])
+input_ids = encoding["input_ids"][0]
+attention_mask = encoding["attention_mask"][0]
+tokens = tokenizer.convert_ids_to_tokens(input_ids)
 print(tokens)
+
+special_ids = set(tokenizer.all_special_ids)
+
+results = []
+
+for idx, original_token_id in enumerate(input_ids):
+    original_token_id = original_token_id.item()
+
+    if original_token_id in special_ids:
+        continue
+
+    masked_input_ids = input_ids.clone()
+    masked_input_ids[idx] = tokenizer.mask_token_id
+
+    inputs = {
+        "input_ids": masked_input_ids.unsqueeze(0),
+        "attention_mask": attention_mask.unsqueeze(0)
+    }
+
+    with torch.no_grad():
+        logits = model(**inputs).logits[0, idx]
+
+    probs = torch.softmax(logits, dim=-1)
+
+    target_prob = probs[original_token_id].item()
+
+    rank = (probs > probs[original_token_id]).sum().item() + 1
+
+    percentile = (probs < probs[original_token_id]).float().mean().item()
+
+    results.append({
+        "position": idx,
+        "token": tokens[idx],
+        "token_id": original_token_id,
+        "probability": target_prob,
+        "rank": rank,
+        "percentile": percentile
+    })
+
 
 word_ids = encoding.word_ids(batch_index=0)
 print(word_ids)
 
+print(results)
     
 """inputs = tokenizer(test_mask, return_tensors="pt").to(device)
 
