@@ -14,12 +14,23 @@ model = AutoModelForMaskedLM.from_pretrained(model_id)
 model.to(device)
 model.eval()
 
-test_sentence = "The man enjoys playing cricket."
+test_sentence = "The man enjoy playing cricket and hates intersectionality."
 test_mask = f"The man {tokenizer.mask_token} playing cricket."
 target = "enjoy"
+print(test_sentence)
+
+encoding = tokenizer(test_sentence, return_tensors="pt").to(device)
+
+print(encoding["input_ids"])
+
+tokens = tokenizer.convert_ids_to_tokens(encoding["input_ids"][0])
+print(tokens)
+
+word_ids = encoding.word_ids(batch_index=0)
+print(word_ids)
 
     
-inputs = tokenizer(test_mask, return_tensors="pt").to(device)
+"""inputs = tokenizer(test_mask, return_tensors="pt").to(device)
 
 mask_positions = (inputs["input_ids"][0] == tokenizer.mask_token_id).nonzero(as_tuple=True)[0]
 if len(mask_positions) != 1:
@@ -48,3 +59,4 @@ print(percentile)
 
 rank = (probs > target_prob).sum().item() + 1
 print(rank)
+"""
