@@ -3,6 +3,9 @@ from dotenv import load_dotenv
 import os
 import torch
 from pathlib import Path
+import json
+from datasets import Dataset
+import csv
 
 def login_to_huggingface(env_file: Path) -> str | None:
     if env_file.exists():
@@ -33,3 +36,44 @@ def choose_device(name: str) -> torch.device:
     if device.type == "mps" and not torch.backends.mps.is_available():
         raise RuntimeError("MPS was requested but is not available.")
     return device
+
+def jsonl_to_list(file_path):
+    all_data = []
+
+    with open(file_path, 'r') as file:
+        for line in file:
+
+            if line.strip(): 
+                row_dict = json.loads(line)
+                all_data.append(row_dict)
+
+    return [row["text"].split('\n\n') for row in all_data]
+
+def tsv_to_dataset(file_path):
+    """
+    Inputs: 
+        file_path (string): path to .tsv file with labelled tokens, paragraphs separated by blank line.
+    Outputs:
+        ds (Hugging Face dataset object)
+    """
+    with open(file_path, "r") as f:
+        my_data = csv.reader(f, delimiter="\t", quotechar='"', escapechar="\\",)
+        data = []
+        sentence = []
+        for line in my_data:
+            if line and line[0].strip():
+                sentence.append(line)
+            else:
+                if sentence:
+                    data.append(sentence)
+                sentence = []
+        if sentence:
+            data.append(sentence)
+
+    dataset = []
+    for para in data:
+        tokens, labels = zip(*para)
+        dataset.append({"tokens": list(tokens), "labels": list(labels)})
+
+    ds = Dataset.from_list(dataset)
+    return ds
