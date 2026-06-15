@@ -44,6 +44,7 @@ for paragraph_idx, prob_paragraph in enumerate(prob_data_flat):
     label_word_count = len(labels)
 
     if model_word_count != label_word_count:
+        print(label_data_flat[paragraph_idx]["tokens"])
         skipped_paragraphs += 1
         skipped_label_tokens += len(labels)
         continue
