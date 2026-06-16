@@ -110,7 +110,7 @@ print(f"avg_rank: {safe_mean(i_ranks)}")
 
 ## PLOTS
 
-"""c_ppls = -np.log(np.array(c_probs) + 1e-9)
+c_ppls = -np.log(np.array(c_probs) + 1e-9)
 i_ppls = -np.log(np.array(i_probs) + 1e-9)
 
 def prob_bins():
@@ -132,10 +132,12 @@ def plot_overlay_hist(ax, c_vals, i_vals, title, xlabel, log_x=False, bins=None)
     ax.set_ylabel('Density')
     ax.legend()
 
-def plot_cdf(ax, c_vals, i_vals, title, xlabel):
+def plot_cdf(ax, c_vals, i_vals, title, xlabel, log_x=False):
     for vals, label, color in [(c_vals, 'correct', 'steelblue'), (i_vals, 'incorrect', 'tomato')]:
         s = np.sort(vals)
         ax.plot(s, np.linspace(0, 1, len(s)), label=label, color=color)
+    if log_x:
+        ax.set_xscale('log')
     ax.set_title(title)
     ax.set_xlabel(xlabel)
     ax.set_ylabel('Cumulative Density')
@@ -150,7 +152,7 @@ fig1.savefig('llm-probability-thresh/distributions_overlay.png', dpi=150)
 
 fig2, axes2 = plt.subplots(1, 2, figsize=(10, 4))
 plot_cdf(axes2[0], c_probs, i_probs, 'Probability CDF', 'Min Token Probability')
-plot_cdf(axes2[1], c_ranks, i_ranks, 'Rank CDF', 'Max Token Rank')
+plot_cdf(axes2[1], c_ranks, i_ranks, 'Log Rank CDF', 'Log Max Token Rank', log_x=True)
 fig2.suptitle('Correct vs Incorrect — CDF', fontsize=13)
 fig2.tight_layout()
 fig2.savefig('llm-probability-thresh/distributions_cdf.png', dpi=150)
@@ -197,5 +199,5 @@ ax5.legend(markerscale=3)
 fig5.tight_layout()
 fig5.savefig('llm-probability-thresh/scatter_highprob_rank.png', dpi=150)
 
-plt.close('all')"""
+plt.close('all')
 
