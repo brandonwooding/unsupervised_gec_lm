@@ -1,4 +1,4 @@
-from utils import login_to_huggingface, choose_device, jsonl_to_list
+from utils import login_to_huggingface, choose_device, jsonl_to_list, get_custom_word_ids
 from pathlib import Path
 from transformers import AutoTokenizer, AutoModelForMaskedLM
 import torch
@@ -20,25 +20,30 @@ model.eval()
 
 data = jsonl_to_list("ged-syntax-probing-main/datasets/fce/json/fce.dev.json")
 
+with open("llm-probability-thresh/fce-dev-paragraph-labels.json") as f:
+    label_data = json.load(f)
+
 # LOOP
 
 big_bad_data = []
 
-for essay_no, essay in enumerate(data):
+for essay_no, (essay, label_essay) in enumerate(zip(data, label_data)):
 
     big_data = []
 
-    for sentence_no, sentence in enumerate(essay):
-        print(f"essay {essay_no}/{len(essay)} | sentence {sentence_no}/{len(sentence)}")
+    for sentence_no, (sentence, label_paragraph) in enumerate(zip(essay, label_essay)):
+        print(f"essay {essay_no + 1}/{len(data)} | sentence {sentence_no + 1}/{len(essay)}")
+        tsv_spans = label_paragraph["spans"]
 
-        encoding = tokenizer(sentence, return_tensors="pt").to(device)
+        encoding = tokenizer(sentence, return_tensors="pt", return_offsets_mapping=True).to(device)
+        offset_mapping = encoding["offset_mapping"][0]
 
         input_ids = encoding["input_ids"][0]
         attention_mask = encoding["attention_mask"][0]
         tokens = tokenizer.convert_ids_to_tokens(input_ids)
 
-        word_ids = encoding.word_ids(batch_index=0)
         special_ids = set(tokenizer.all_special_ids)
+        word_ids = get_custom_word_ids(input_ids, offset_mapping, tsv_spans, special_ids)
 
         results = []
 

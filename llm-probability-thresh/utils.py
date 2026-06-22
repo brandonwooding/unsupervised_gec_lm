@@ -77,3 +77,18 @@ def tsv_to_dataset(file_path):
 
     ds = Dataset.from_list(dataset)
     return ds
+
+def get_custom_word_ids(input_ids, offset_mapping, tsv_spans, special_ids):
+    word_ids = []
+    for token_id, (char_start, char_end) in zip(input_ids, offset_mapping):
+        if token_id.item() in special_ids:
+            word_ids.append(None)
+            continue
+        char_start, char_end = char_start.item(), char_end.item()
+        matched = None
+        for i, (s, e) in enumerate(tsv_spans):
+            if s<= char_start and char_end <= e:
+                matched = i
+                break
+        word_ids.append(matched)
+    return word_ids
