@@ -84,10 +84,16 @@ def get_custom_word_ids(input_ids, offset_mapping, tsv_spans, special_ids):
         if token_id.item() in special_ids:
             word_ids.append(None)
             continue
+        
         char_start, char_end = char_start.item(), char_end.item()
+        
+        if char_start == char_end:
+            word_ids.append(None)
+            continue
+        
         matched = None
         for i, (s, e) in enumerate(tsv_spans):
-            if s<= char_start and char_end <= e:
+            if char_start < e and char_end > s:
                 matched = i
                 break
         word_ids.append(matched)

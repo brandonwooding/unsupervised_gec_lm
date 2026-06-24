@@ -64,7 +64,9 @@ for essay_no, (essay, label_essay) in enumerate(zip(data, label_data)):
             with torch.no_grad():
                 logits = model(**inputs).logits[0, idx]
 
-            probs = torch.softmax(logits, dim=-1)
+            log_probs = torch.log_softmax(logits, dim=-1)
+            probs = log_probs.exp()
+            entropy = -(probs * log_probs).sum().item()
 
             target_prob = probs[original_token_id].item()
 
@@ -78,6 +80,7 @@ for essay_no, (essay, label_essay) in enumerate(zip(data, label_data)):
                 "token_id": original_token_id,
                 "word_id": word_ids[idx],
                 "probability": target_prob,
+                "entropy": entropy,
                 "rank": rank,
                 "percentile": percentile
             })
